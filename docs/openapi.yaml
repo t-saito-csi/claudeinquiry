@@ -1,0 +1,2179 @@
+openapi: 3.1.0
+
+info:
+  title: デジタル問診システム API
+  version: 1.0.0
+  description: |
+    大規模病院向けデジタル問診システムのREST API仕様書。
+    患者向け問診フォーム・受付スタッフ・医師用ダッシュボード・管理者機能を提供する。
+
+    ## 認証方式
+    - **スタッフ向け**: JWT Bearer トークン（アクセストークン15分、リフレッシュトークン8時間）
+    - **患者向け**: QRトークン（UUID v4、URLパスパラメータ）
+
+    ## タイムゾーン
+    タイムスタンプはすべてISO 8601 UTC形式。表示時はJSTに変換すること。
+  contact:
+    name: 開発チーム
+  license:
+    name: Private
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: ローカル開発環境
+  - url: https://api-stg.inquiry.hospital.example.com/api/v1
+    description: ステージング環境
+  - url: https://api.inquiry.hospital.example.com/api/v1
+    description: 本番環境
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: auth
+    description: 認証・認可
+  - name: patient
+    description: 患者向け問診API（QRトークン認証）
+  - name: reception
+    description: 受付スタッフ向けAPI
+  - name: dashboard
+    description: 医師用ダッシュボードAPI
+  - name: admin-forms
+    description: 管理者 - フォーム管理
+  - name: admin-staff
+    description: 管理者 - スタッフ管理
+  - name: admin-audit
+    description: 管理者 - 監査・設定
+  - name: master
+    description: 共通マスタAPI
+
+# ─────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────
+paths:
+
+  # ====== 認証 ======
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: スタッフログイン
+      description: メールアドレスとパスワードでログインし、アクセストークンを取得する。リフレッシュトークンはHttpOnly Cookieにセットされる。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: ログイン成功
+          headers:
+            Set-Cookie:
+              description: "refresh_token={token}; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=28800"
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+        '403':
+          $ref: '#/components/responses/AccountLocked'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: ログアウト
+      description: アクセストークンを無効化し、リフレッシュトークンCookieを削除する。
+      responses:
+        '200':
+          description: ログアウト成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: アクセストークンリフレッシュ
+      description: リフレッシュトークン（Cookie）を使ってアクセストークンを再発行する。トークンローテーションにより新しいリフレッシュトークンも発行される。
+      security: []
+      responses:
+        '200':
+          description: リフレッシュ成功
+          headers:
+            Set-Cookie:
+              description: 新しいリフレッシュトークン
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '401':
+          $ref: '#/components/responses/InvalidRefreshToken'
+
+  /auth/reset-password/request:
+    post:
+      tags: [auth]
+      summary: パスワードリセット申請
+      description: パスワードリセット用メールを送信する。メールアドレスが存在しない場合も200を返す（ユーザー存在確認の防止）。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequestBody'
+      responses:
+        '200':
+          description: メール送信済み（またはメールアドレス不存在でも同じレスポンス）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /auth/reset-password/confirm:
+    post:
+      tags: [auth]
+      summary: パスワードリセット確定
+      description: リセットトークン（メールのリンクから取得）を使ってパスワードを変更する。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordConfirmBody'
+      responses:
+        '200':
+          description: パスワード変更成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ====== 患者向け ======
+
+  /sessions/{token}/info:
+    get:
+      tags: [patient]
+      summary: QRトークン検証・セッション情報取得
+      description: QRコードのトークンを検証し、問診開始に必要な情報を返す。JWT認証不要。
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          description: QRコードに埋め込まれたUUID v4トークン
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: セッション情報
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SessionInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /departments/{code}/form:
+    get:
+      tags: [patient]
+      summary: 診療科フォーム定義取得
+      description: 患者の問診フォームに使用する、現在公開中のフォーム定義を取得する。
+      security: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          description: 診療科コード（naika, geka, sanka_fujinka, shonika）
+          schema:
+            type: string
+        - name: session_id
+          in: query
+          required: true
+          description: セッションIDでアクセス権を確認
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: フォーム定義
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FormDefinitionForPatient'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /sessions/{session_id}/responses:
+    post:
+      tags: [patient]
+      summary: 問診回答送信
+      description: |
+        患者の問診回答を送信する。
+        送信後、非同期で以下の処理が実行される：
+        1. Claude API によるAIサマリー生成
+        2. NEC MegaOakHRへのFHIR QuestionnaireResource送信
+      security: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitResponseRequest'
+      responses:
+        '201':
+          description: 回答送信成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubmitResponseResult'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ====== 受付スタッフ ======
+
+  /sessions:
+    get:
+      tags: [reception]
+      summary: 問診セッション一覧
+      description: 指定日の問診セッション一覧を取得する。デフォルトは本日。
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 対象日（YYYY-MM-DD）。デフォルト本日
+        - name: department_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SessionStatusEnum'
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: 患者IDで部分検索
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: セッション一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/SessionListItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [reception]
+      summary: QRコード発行（セッション作成）
+      description: 患者の問診セッションを作成し、QRコードを発行する。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: セッション作成・QR発行成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CreatedSession'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /sessions/{id}:
+    patch:
+      tags: [reception]
+      summary: セッションステータス更新
+      description: セッションをキャンセルなど、ステータスを更新する。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSessionStatusRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UpdatedSessionStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /sessions/{id}/reissue-qr:
+    post:
+      tags: [reception]
+      summary: QRコード再発行
+      description: 期限切れ・キャンセル済みセッションのQRを再発行する。新セッションを生成し、旧セッションをexpiredに更新する。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: QR再発行成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ReissuedQR'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /sessions/{id}/qr.png:
+    get:
+      tags: [reception]
+      summary: QRコード画像取得
+      description: QRコードをPNG画像として返す。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 300
+            minimum: 100
+            maximum: 1000
+          description: 画像サイズ（px）
+      responses:
+        '200':
+          description: QRコードPNG画像
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ====== 医師用ダッシュボード ======
+
+  /dashboard/sessions:
+    get:
+      tags: [dashboard]
+      summary: 患者一覧（本日）
+      description: 本日の担当診療科の患者一覧を取得する。要注意フラグ付き患者を上位に表示。
+      parameters:
+        - name: date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 対象日（デフォルト本日）
+        - name: department_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SessionStatusEnum'
+        - name: ai_status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AiStatusEnum'
+        - name: has_risk_flags
+          in: query
+          schema:
+            type: boolean
+          description: trueで要注意患者のみ表示
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: 患者一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DashboardPatientListItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /dashboard/sessions/{session_id}:
+    get:
+      tags: [dashboard]
+      summary: 患者詳細・問診回答
+      description: 患者の問診回答全文とAIサマリーを取得する。AIサマリーが生成中の場合はstatusがprocessingで返る。
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 患者詳細
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DashboardSessionDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /responses/{id}/pdf:
+    get:
+      tags: [dashboard]
+      summary: 問診票PDF出力
+      description: 問診回答票をA4 PDFファイルとしてダウンロードする。サーバーサイドで生成。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: response_id
+        - name: include_ai_summary
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: PDFにAIサマリーを含めるか
+      responses:
+        '200':
+          description: PDF ファイル
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="inquiry-000456-20260328.pdf"'
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /patients/{patient_id}/sessions:
+    get:
+      tags: [dashboard]
+      summary: 過去問診履歴
+      description: 患者の過去の問診セッション履歴を時系列（降順）で取得する。
+      parameters:
+        - name: patient_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: 過去問診履歴
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PatientHistoryItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ====== 共通マスタ ======
+
+  /departments:
+    get:
+      tags: [master]
+      summary: 診療科一覧
+      description: 有効な診療科一覧を取得する。
+      responses:
+        '200':
+          description: 診療科一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Department'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ====== 管理者 - フォーム ======
+
+  /admin/forms:
+    get:
+      tags: [admin-forms]
+      summary: フォーム一覧
+      description: 診療科ごとのフォーム定義一覧（全バージョン）を取得する。
+      parameters:
+        - name: department_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/FormStatusEnum'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: フォーム一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/FormDefinitionSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [admin-forms]
+      summary: フォーム新規作成
+      description: 新規フォーム定義をドラフト状態で作成する。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFormRequest'
+      responses:
+        '201':
+          description: フォーム作成成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FormDefinitionSummary'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/forms/{id}:
+    get:
+      tags: [admin-forms]
+      summary: フォーム詳細取得
+      description: フォーム定義の詳細（スキーマ含む）を取得する。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: フォーム詳細
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FormDefinitionDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [admin-forms]
+      summary: フォーム更新
+      description: フォーム定義のスキーマを更新する。ドラフト状態のみ更新可能。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateFormRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/FormDefinitionSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /admin/forms/{id}/publish:
+    post:
+      tags: [admin-forms]
+      summary: フォーム公開
+      description: ドラフトのフォームを公開する。同一診療科の現在公開中フォームはアーカイブに移行する。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: 公開成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PublishFormResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /admin/forms/{id}/duplicate:
+    post:
+      tags: [admin-forms]
+      summary: フォーム複製
+      description: 公開済みフォームをドラフトとして複製する（次バージョン編集の起点）。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: 複製成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DuplicateFormResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ====== 管理者 - スタッフ ======
+
+  /admin/staff:
+    get:
+      tags: [admin-staff]
+      summary: スタッフ一覧
+      parameters:
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/StaffRoleEnum'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: 氏名・メールで部分検索
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: スタッフ一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/StaffUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [admin-staff]
+      summary: スタッフ作成
+      description: スタッフアカウントを新規作成する。初期パスワードをメール送信する。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStaffRequest'
+      responses:
+        '201':
+          description: スタッフ作成成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CreatedStaff'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /admin/staff/{id}:
+    get:
+      tags: [admin-staff]
+      summary: スタッフ詳細
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: スタッフ詳細
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StaffUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [admin-staff]
+      summary: スタッフ情報更新
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStaffRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/StaffUser'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /admin/staff/{id}/status:
+    patch:
+      tags: [admin-staff]
+      summary: スタッフ有効/無効切替
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStaffStatusRequest'
+      responses:
+        '200':
+          description: ステータス更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          staff_id:
+                            type: string
+                            format: uuid
+                          is_active:
+                            type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  # ====== 管理者 - 監査・設定 ======
+
+  /admin/audit-logs:
+    get:
+      tags: [admin-audit]
+      summary: 監査ログ一覧
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: 開始日（YYYY-MM-DD）
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: 終了日（最大90日範囲）
+        - name: staff_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            $ref: '#/components/schemas/AuditActionEnum'
+        - name: resource_type
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: 監査ログ一覧
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AuditLog'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/audit-logs/export:
+    get:
+      tags: [admin-audit]
+      summary: 監査ログCSVエクスポート
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: staff_user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            $ref: '#/components/schemas/AuditActionEnum'
+      responses:
+        '200':
+          description: CSVファイル
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                example: 'attachment; filename="audit-logs-20260328.csv"'
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /admin/settings:
+    get:
+      tags: [admin-audit]
+      summary: システム設定取得
+      responses:
+        '200':
+          description: システム設定
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SystemSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    put:
+      tags: [admin-audit]
+      summary: システム設定更新
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemSettings'
+      responses:
+        '200':
+          description: 設定更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SystemSettings'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+# ─────────────────────────────────────────────────────────────
+# COMPONENTS
+# ─────────────────────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT アクセストークン（有効期限15分）"
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: ページ番号
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: 1ページあたり件数
+
+  # ── Schemas ──────────────────────────────────────────────────
+
+  schemas:
+
+    # --- Enums ---
+
+    SessionStatusEnum:
+      type: string
+      enum: [pending, in_progress, completed, cancelled, expired]
+      description: |
+        - pending: QR発行済み・未開始
+        - in_progress: 記入中
+        - completed: 回答送信完了
+        - cancelled: 受付によりキャンセル
+        - expired: QRトークン有効期限切れ
+
+    AiStatusEnum:
+      type: string
+      enum: [pending, processing, completed, failed, skipped]
+
+    FhirSyncStatusEnum:
+      type: string
+      enum: [pending, syncing, synced, failed]
+
+    FormStatusEnum:
+      type: string
+      enum: [draft, published, archived]
+
+    StaffRoleEnum:
+      type: string
+      enum: [admin, doctor, nurse, reception]
+
+    AuditActionEnum:
+      type: string
+      enum: [read, create, update, delete, export, login, logout, login_failed, qr_issued, form_published]
+
+    GenderEnum:
+      type: string
+      enum: [male, female, other]
+
+    RiskFlagSeverityEnum:
+      type: string
+      enum: [high, medium, low]
+
+    # --- Common Response Wrappers ---
+
+    ResponseMeta:
+      type: object
+      required: [request_id, timestamp]
+      properties:
+        request_id:
+          type: string
+          example: "req-550e8400-e29b-41d4"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-03-28T01:30:00Z"
+
+    PaginationMeta:
+      allOf:
+        - $ref: '#/components/schemas/ResponseMeta'
+        - type: object
+          properties:
+            pagination:
+              type: object
+              properties:
+                page:
+                  type: integer
+                per_page:
+                  type: integer
+                total:
+                  type: integer
+                total_pages:
+                  type: integer
+
+    SuccessEnvelope:
+      type: object
+      properties:
+        data:
+          description: レスポンスデータ（型は各エンドポイントで上書き）
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        error:
+          type: 'null'
+
+    PaginatedEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          description: レスポンスデータ配列
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+        error:
+          type: 'null'
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        data:
+          type: 'null'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              example: "入力内容に誤りがあります"
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    MessageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                message:
+                  type: string
+
+    # --- Auth ---
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: "yamada@hospital.example.com"
+        password:
+          type: string
+          minLength: 8
+          example: "P@ssw0rd!"
+
+    LoginResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                token_type:
+                  type: string
+                  example: "Bearer"
+                expires_in:
+                  type: integer
+                  example: 900
+                  description: 有効期限（秒）
+                user:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    email:
+                      type: string
+                      format: email
+                    full_name:
+                      type: string
+                    role:
+                      $ref: '#/components/schemas/StaffRoleEnum'
+                    department_ids:
+                      type: array
+                      items:
+                        type: string
+                        format: uuid
+
+    RefreshResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                expires_in:
+                  type: integer
+                  example: 900
+
+    ResetPasswordRequestBody:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    ResetPasswordConfirmBody:
+      type: object
+      required: [reset_token, new_password, new_password_confirm]
+      properties:
+        reset_token:
+          type: string
+        new_password:
+          type: string
+          minLength: 8
+          description: 大文字・小文字・数字・記号を各1文字以上含む
+        new_password_confirm:
+          type: string
+
+    # --- Patient ---
+
+    SessionInfo:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        patient_name:
+          type: string
+          example: "田中 花子"
+        department_name:
+          type: string
+          example: "内科"
+        department_code:
+          type: string
+          example: "naika"
+        appointment_at:
+          type: string
+          format: date-time
+        doctor_name:
+          type: string
+          nullable: true
+        form_definition_id:
+          type: string
+          format: uuid
+        qr_expires_at:
+          type: string
+          format: date-time
+
+    FormDefinitionForPatient:
+      type: object
+      properties:
+        form_definition_id:
+          type: string
+          format: uuid
+        department_code:
+          type: string
+        department_name:
+          type: string
+        version:
+          type: integer
+        schema:
+          type: object
+          description: フォーム定義JSON（docs/form-schema.md参照）
+          additionalProperties: true
+
+    SubmitResponseRequest:
+      type: object
+      required: [form_definition_id, common_answers, department_answers]
+      properties:
+        form_definition_id:
+          type: string
+          format: uuid
+        common_answers:
+          type: object
+          description: 共通問診項目の回答（キーはフォームのquestion_id）
+          additionalProperties: true
+        department_answers:
+          type: object
+          description: 診療科別問診項目の回答
+          additionalProperties: true
+
+    SubmitResponseResult:
+      type: object
+      properties:
+        response_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        ai_status:
+          $ref: '#/components/schemas/AiStatusEnum'
+        fhir_sync_status:
+          $ref: '#/components/schemas/FhirSyncStatusEnum'
+        created_at:
+          type: string
+          format: date-time
+
+    # --- Reception ---
+
+    CreateSessionRequest:
+      type: object
+      required: [external_patient_id, department_id, appointment_at]
+      properties:
+        external_patient_id:
+          type: string
+          maxLength: 50
+          example: "000123"
+        department_id:
+          type: string
+          format: uuid
+        appointment_at:
+          type: string
+          format: date-time
+          description: 過去日時は不可
+
+    CreatedSession:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        external_patient_id:
+          type: string
+        department_id:
+          type: string
+          format: uuid
+        department_name:
+          type: string
+        appointment_at:
+          type: string
+          format: date-time
+        qr_token:
+          type: string
+          format: uuid
+        qr_image_url:
+          type: string
+          example: "/api/v1/sessions/uuid/qr.png"
+        qr_url:
+          type: string
+          description: 患者がQRスキャン後にアクセスするURL
+        qr_expires_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/SessionStatusEnum'
+
+    SessionListItem:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        external_patient_id:
+          type: string
+        department_name:
+          type: string
+        appointment_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/SessionStatusEnum'
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        minutes_elapsed:
+          type: integer
+          nullable: true
+          description: 現在記入中の経過時間（分）
+        is_overdue:
+          type: boolean
+          description: 設定値を超えて未完了のフラグ
+
+    UpdateSessionStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [cancelled]
+          description: 現状はcancelledのみ更新可能
+
+    UpdatedSessionStatus:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/SessionStatusEnum'
+        updated_at:
+          type: string
+          format: date-time
+
+    ReissuedQR:
+      type: object
+      properties:
+        new_session_id:
+          type: string
+          format: uuid
+        qr_token:
+          type: string
+          format: uuid
+        qr_image_url:
+          type: string
+        qr_expires_at:
+          type: string
+          format: date-time
+
+    # --- Dashboard ---
+
+    RiskFlag:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [drug_allergy, food_allergy, medication_risk, emergency, other]
+        label:
+          type: string
+          example: "薬剤アレルギー"
+        severity:
+          $ref: '#/components/schemas/RiskFlagSeverityEnum'
+        detail:
+          type: string
+          nullable: true
+          example: "ペニシリン系（アナフィラキシー歴あり）"
+
+    DashboardPatientListItem:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        external_patient_id:
+          type: string
+        patient_name:
+          type: string
+        department_name:
+          type: string
+        appointment_at:
+          type: string
+          format: date-time
+        session_status:
+          $ref: '#/components/schemas/SessionStatusEnum'
+        ai_status:
+          $ref: '#/components/schemas/AiStatusEnum'
+        risk_flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskFlag'
+        has_risk_flags:
+          type: boolean
+
+    AiSummary:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/AiStatusEnum'
+        symptom_summary:
+          type: string
+          nullable: true
+        risk_flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskFlag'
+        recommendations:
+          type: array
+          items:
+            type: string
+        diff_from_previous:
+          type: object
+          nullable: true
+          properties:
+            previous_session_id:
+              type: string
+              format: uuid
+            previous_date:
+              type: string
+              format: date
+            new_symptoms:
+              type: array
+              items:
+                type: string
+            resolved_symptoms:
+              type: array
+              items:
+                type: string
+            summary:
+              type: string
+        model:
+          type: string
+          example: "claude-sonnet-4-6"
+          nullable: true
+        input_tokens:
+          type: integer
+          nullable: true
+        output_tokens:
+          type: integer
+          nullable: true
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DashboardSessionDetail:
+      type: object
+      properties:
+        session:
+          type: object
+          properties:
+            session_id:
+              type: string
+              format: uuid
+            appointment_at:
+              type: string
+              format: date-time
+            department_name:
+              type: string
+            session_status:
+              $ref: '#/components/schemas/SessionStatusEnum'
+            completed_at:
+              type: string
+              format: date-time
+              nullable: true
+        patient:
+          type: object
+          properties:
+            patient_id:
+              type: string
+              format: uuid
+            external_patient_id:
+              type: string
+            name:
+              type: string
+            gender:
+              $ref: '#/components/schemas/GenderEnum'
+            date_of_birth:
+              type: string
+              format: date
+            phone:
+              type: string
+        response:
+          type: object
+          properties:
+            response_id:
+              type: string
+              format: uuid
+            common_answers:
+              type: object
+              additionalProperties: true
+            department_answers:
+              type: object
+              additionalProperties: true
+            submitted_at:
+              type: string
+              format: date-time
+        ai_summary:
+          $ref: '#/components/schemas/AiSummary'
+        fhir_resource_id:
+          type: string
+          nullable: true
+        fhir_sync_status:
+          $ref: '#/components/schemas/FhirSyncStatusEnum'
+
+    PatientHistoryItem:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        department_name:
+          type: string
+        appointment_at:
+          type: string
+          format: date-time
+        session_status:
+          $ref: '#/components/schemas/SessionStatusEnum'
+        chief_complaint:
+          type: string
+          nullable: true
+        risk_flags:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskFlag'
+        ai_summary_excerpt:
+          type: string
+          nullable: true
+
+    # --- Master ---
+
+    Department:
+      type: object
+      properties:
+        department_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "内科"
+        code:
+          type: string
+          example: "naika"
+        display_order:
+          type: integer
+
+    # --- Admin Forms ---
+
+    FormDefinitionSummary:
+      type: object
+      properties:
+        form_definition_id:
+          type: string
+          format: uuid
+        department_id:
+          type: string
+          format: uuid
+        department_name:
+          type: string
+        version:
+          type: integer
+        status:
+          $ref: '#/components/schemas/FormStatusEnum'
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_by_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    FormDefinitionDetail:
+      allOf:
+        - $ref: '#/components/schemas/FormDefinitionSummary'
+        - type: object
+          properties:
+            schema:
+              type: object
+              additionalProperties: true
+              description: フォーム定義JSON（docs/form-schema.md参照）
+
+    CreateFormRequest:
+      type: object
+      required: [department_id, schema]
+      properties:
+        department_id:
+          type: string
+          format: uuid
+        schema:
+          type: object
+          additionalProperties: true
+
+    UpdateFormRequest:
+      type: object
+      required: [schema]
+      properties:
+        schema:
+          type: object
+          additionalProperties: true
+
+    PublishFormResult:
+      type: object
+      properties:
+        form_definition_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: "published"
+        published_at:
+          type: string
+          format: date-time
+        archived_form_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    DuplicateFormResult:
+      type: object
+      properties:
+        new_form_definition_id:
+          type: string
+          format: uuid
+        department_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        status:
+          type: string
+          example: "draft"
+        copied_from_version:
+          type: integer
+
+    # --- Admin Staff ---
+
+    StaffUser:
+      type: object
+      properties:
+        staff_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/StaffRoleEnum'
+        department_names:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateStaffRequest:
+      type: object
+      required: [email, full_name, role]
+      properties:
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+          maxLength: 100
+        role:
+          $ref: '#/components/schemas/StaffRoleEnum'
+        department_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    UpdateStaffRequest:
+      type: object
+      properties:
+        full_name:
+          type: string
+          maxLength: 100
+        role:
+          $ref: '#/components/schemas/StaffRoleEnum'
+        department_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    UpdateStaffStatusRequest:
+      type: object
+      required: [is_active]
+      properties:
+        is_active:
+          type: boolean
+
+    CreatedStaff:
+      type: object
+      properties:
+        staff_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        role:
+          $ref: '#/components/schemas/StaffRoleEnum'
+        is_active:
+          type: boolean
+        initial_password_sent:
+          type: boolean
+
+    # --- Admin Audit ---
+
+    AuditLog:
+      type: object
+      properties:
+        log_id:
+          type: string
+          format: uuid
+        staff_name:
+          type: string
+          nullable: true
+        staff_role:
+          $ref: '#/components/schemas/StaffRoleEnum'
+          nullable: true
+        action:
+          $ref: '#/components/schemas/AuditActionEnum'
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+          nullable: true
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+        ip_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SystemSettings:
+      type: object
+      properties:
+        hospital_name:
+          type: string
+          maxLength: 100
+          example: "○○総合病院"
+        reception_phone:
+          type: string
+          example: "03-XXXX-XXXX"
+        inquiry_overdue_minutes:
+          type: integer
+          minimum: 5
+          maximum: 120
+          example: 30
+          description: 問診未完了アラート表示時間（分）
+        ai_summary_enabled:
+          type: boolean
+        ai_disclaimer_text:
+          type: string
+          maxLength: 500
+        qr_validity_hours:
+          type: integer
+          minimum: 1
+          maximum: 72
+          example: 36
+          description: QRコード有効時間（時間）
+
+  # ── Responses ────────────────────────────────────────────────
+
+  responses:
+
+    ValidationError:
+      description: バリデーションエラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "VALIDATION_ERROR"
+              message: "入力内容に誤りがあります"
+              details:
+                - field: "email"
+                  message: "メールアドレスの形式が正しくありません"
+
+    Unauthorized:
+      description: 未認証・トークン無効
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "TOKEN_EXPIRED"
+              message: "アクセストークンの有効期限が切れています"
+              details: []
+
+    InvalidCredentials:
+      description: メール・パスワード不一致
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "INVALID_CREDENTIALS"
+              message: "メールアドレスまたはパスワードが正しくありません"
+              details: []
+
+    AccountLocked:
+      description: アカウントロック中
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "ACCOUNT_LOCKED"
+              message: "ログイン試行回数が上限に達しました。30分後に再試行してください。"
+              details: []
+
+    InvalidRefreshToken:
+      description: リフレッシュトークン無効
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+    Forbidden:
+      description: ロール権限不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "PERMISSION_DENIED"
+              message: "この操作を実行する権限がありません"
+              details: []
+
+    NotFound:
+      description: リソースが存在しない
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          example:
+            data: null
+            meta:
+              request_id: "req-xxx"
+              timestamp: "2026-03-28T01:30:00Z"
+            error:
+              code: "NOT_FOUND"
+              message: "指定されたリソースが見つかりません"
+              details: []
+
+    Conflict:
+      description: 競合エラー（重複・状態遷移不可）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+
+    UnprocessableEntity:
+      description: 業務ロジックエラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
