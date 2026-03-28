@@ -46,7 +46,7 @@
 
 ### 1.2 テスト対象外
 
-- インフラ（AWS ECS / RDS のプロビジョニング自体）
+- インフラ（OCI Compute Instance / Block Volume のプロビジョニング自体）
 - NEC MegaOakHR 本番環境との実接続
 - Claude API 本番課金の動作確認
 

@@ -425,7 +425,7 @@ CREATE TABLE patients (
 
 COMMENT ON TABLE  patients                      IS '患者情報。個人識別情報はAES-256-GCMで暗号化して保存';
 COMMENT ON COLUMN patients.external_patient_id  IS 'NEC MegaOakHRの患者ID。FHIR Patient リソースの参照に使用';
-COMMENT ON COLUMN patients.name_encrypted       IS '氏名の暗号化バイト列。AWS KMSで管理するキーで復号';
+COMMENT ON COLUMN patients.name_encrypted       IS '氏名の暗号化バイト列。OCI Vaultで管理するキーで復号';
 COMMENT ON COLUMN patients.name_iv              IS 'GCMモードの初期化ベクタ（96bit = 12バイト）';
 ```
 
@@ -944,7 +944,7 @@ WHERE status = 'pending'
 
 ```
 暗号化キーの取得フロー:
-  アプリ起動時 → AWS KMS に認証 → データキー(DEK)を取得
+  アプリ起動時 → OCI Vault (KMS) に認証 → データキー(DEK)を取得
                 → DEK をメモリに保持（ディスク・DB には書かない）
 
 各カラムの暗号化:
@@ -1030,7 +1030,7 @@ WHERE r.session_id = s.id
 | WAL・バックアップ | 〜10GB |
 | **合計（余裕含む）** | **〜20GB** |
 
-> **推奨インスタンス**: AWS RDS PostgreSQL `db.r6g.large`（2vCPU / 16GB RAM）+ gp3 50GB SSD から開始。監査ログが増加した時点で拡張。
+> **推奨インスタンス**: OCI Compute Instance上のDockerコンテナで稼働する PostgreSQL 16。Block Volume 200GB（`/data/postgres`）をマウント。VM.Standard.E4.Flex（2 OCPU / 16GB RAM）から開始し、監査ログが増加した時点で拡張。
 
 ---
 
