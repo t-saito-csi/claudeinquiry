@@ -480,7 +480,7 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
 | 条件 | ステータス | error.code |
 |------|----------|-----------|
 | 存在しないトークン | 404 | `INVALID_TOKEN` |
-| 有効期限切れ | 422 | `TOKEN_EXPIRED` |
+| 有効期限切れ | 422 | `QR_TOKEN_EXPIRED` |
 | 使用済み | 422 | `ALREADY_COMPLETED` |
 | キャンセル済み | 422 | `SESSION_CANCELLED` |
 
@@ -639,7 +639,7 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
 |------|--------|
 | form_definition_id | セッションのform_definition_idと一致すること |
 | q_consent_privacy | `true` 必須 |
-| q_consent_ai | `true` 必須 |
+| q_consent_ai | 任意。`false` の場合は AI 分析をスキップ（`ai_status = 'skipped'`） |
 | フォームスキーマの required 項目 | 全て必須 |
 | 数値項目 | スキーマの min/max 範囲内 |
 
@@ -666,7 +666,7 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
 | セッション未開始 / キャンセル済み | 422 | `SESSION_NOT_IN_PROGRESS` |
 | 回答済み | 409 | `RESPONSE_ALREADY_EXISTS` |
 | バリデーション失敗 | 400 | `VALIDATION_ERROR` |
-| 同意未チェック | 400 | `CONSENT_REQUIRED` |
+| `q_consent_privacy: false` | 400 | `CONSENT_REQUIRED` |
 
 ---
 
@@ -684,7 +684,8 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
 {
   "external_patient_id": "000123",
   "department_id": "uuid-naika",
-  "appointment_at": "2026-03-28T01:30:00Z"
+  "appointment_at": "2026-03-28T01:30:00Z",
+  "doctor_id": "uuid-doctor"
 }
 ```
 
@@ -695,6 +696,7 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
 | external_patient_id | 必須・1〜50文字 |
 | department_id | 必須・存在する診療科 |
 | appointment_at | 必須・過去日時不可 |
+| doctor_id | 任意・staff_usersの doctor ロールのUUID |
 
 **レスポンス `201 Created`:**
 
@@ -710,6 +712,8 @@ QRコードのトークンを検証し、問診開始に必要な情報を返す
     "qr_image_url": "/api/v1/sessions/uuid-session/qr.png",
     "qr_url": "https://inquiry.hospital.example.com/inquiry?token=550e8400...",
     "qr_expires_at": "2026-03-28T15:00:00Z",
+    "doctor_id": "uuid-doctor",
+    "doctor_name": "山田 太郎",
     "status": "pending"
   },
   "meta": { "request_id": "...", "timestamp": "..." },
@@ -1440,7 +1444,7 @@ Body: [PDF バイナリ]
 
 **バリデーション:**
 
-- 自分自身を無効化することはできない（`403 Forbidden`）
+- 自分自身を無効化することはできない（`422 Unprocessable Entity`）
 - 最後のadminを無効化することはできない（`422 Unprocessable Entity`）
 
 ---
@@ -1575,7 +1579,7 @@ Body: [CSV テキスト]
 | `ACCOUNT_DISABLED` | 403 | アカウント無効 |
 | `PERMISSION_DENIED` | 403 | ロール権限不足 |
 | `NOT_FOUND` | 404 | リソースが存在しない |
-| `TOKEN_EXPIRED` | 422 | QRトークン有効期限切れ |
+| `QR_TOKEN_EXPIRED` | 422 | QRトークン有効期限切れ |
 | `ALREADY_COMPLETED` | 422 | 問診完了済み |
 | `SESSION_CANCELLED` | 422 | セッションキャンセル済み |
 | `SESSION_NOT_IN_PROGRESS` | 422 | セッション未開始・完了・キャンセル済み |

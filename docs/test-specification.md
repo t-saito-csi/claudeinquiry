@@ -708,19 +708,15 @@ async def test_submit_response_success(client, db_session):
 
 ---
 
-### TC-PAT-008: 同意なしは送信不可
+### TC-PAT-008: 個人情報同意なしは送信不可、AI同意なしはスキップ
 
 | 優先度 | 高 | 種別 | 統合テスト |
 
 ```python
-@pytest.mark.parametrize("missing_consent", [
-    {"q_consent_privacy": False, "q_consent_ai": True},
-    {"q_consent_privacy": True, "q_consent_ai": False},
-    {"q_consent_privacy": False, "q_consent_ai": False},
-])
-async def test_response_rejected_without_consent(client, db_session, missing_consent):
+async def test_response_rejected_without_privacy_consent(client, db_session):
+    """個人情報同意なしは送信不可（CONSENT_REQUIRED）"""
     session = await InquirySessionFactory.create(status="in_progress", db=db_session)
-    answers = {**valid_common_answers(), **missing_consent}
+    answers = {**valid_common_answers(), "q_consent_privacy": False, "q_consent_ai": True}
 
     response = await client.post(
         f"/api/v1/sessions/{session.id}/responses",
@@ -729,6 +725,22 @@ async def test_response_rejected_without_consent(client, db_session, missing_con
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "CONSENT_REQUIRED"
+
+
+async def test_response_without_ai_consent_skips_ai_analysis(client, db_session):
+    """AI利用同意なし（q_consent_ai: false）でも送信可能。ai_status='skipped'になる"""
+    session = await InquirySessionFactory.create(status="in_progress", db=db_session)
+    answers = {**valid_common_answers(), "q_consent_privacy": True, "q_consent_ai": False}
+
+    response = await client.post(
+        f"/api/v1/sessions/{session.id}/responses",
+        json={"form_definition_id": "...", "common_answers": answers, "department_answers": {}}
+    )
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert data["ai_status"] == "skipped"       # AI分析がスキップされること
+    assert data["fhir_sync_status"] == "pending"  # FHIR同期は実行されること
 ```
 
 ---
@@ -787,12 +799,14 @@ async def test_body_temperature_boundary_validation(client, db_session, temp, ex
 async def test_create_session_returns_qr_token(reception_client, db_session):
     dept = await DepartmentFactory.create(db=db_session)
     await FormDefinitionFactory.create(department_id=dept.id, status="published", db=db_session)
+    doctor = await StaffUserFactory.create(role="doctor", department_ids=[dept.id], db=db_session)
     patient = await PatientFactory.create(db=db_session)
 
     response = await reception_client.post("/api/v1/sessions", json={
         "external_patient_id": patient.external_patient_id,
         "department_id": str(dept.id),
-        "appointment_at": (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        "appointment_at": (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+        "doctor_id": str(doctor.id)
     })
 
     assert response.status_code == 201
@@ -801,6 +815,7 @@ async def test_create_session_returns_qr_token(reception_client, db_session):
     assert "qr_image_url" in data
     assert "qr_url" in data
     assert data["status"] == "pending"
+    assert data["doctor_name"] == doctor.full_name  # 担当医名が返ること
     # QRトークンがUUID形式であること
     uuid.UUID(data["qr_token"])  # 無効なUUIDなら ValueError が出る
     # QR有効期限が予約日翌日以降であること
@@ -1439,8 +1454,8 @@ async def test_fhir_sync_retries_on_failure(db_session, respx_mock):
     await db_session.refresh(queue_entry)
     assert queue_entry.retry_count == 1
     assert queue_entry.status == "pending"
-    # next_retry_at が now + 30秒以上であること
-    assert queue_entry.next_retry_at > datetime.utcnow() + timedelta(seconds=25)
+    # next_retry_at が now + 1分以上であること（FHIRキューの1回目リトライは+1分）
+    assert queue_entry.next_retry_at > datetime.utcnow() + timedelta(seconds=55)
 
 async def test_fhir_sync_fails_permanently_after_3_retries(db_session, respx_mock):
     """3回全て失敗するとfailed確定になる"""

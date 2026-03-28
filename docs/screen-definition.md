@@ -594,7 +594,7 @@ Response: {
 | INVALID_TOKEN | ご利用いただけません | URLが正しくないか、トークンが無効です |
 | TOKEN_EXPIRED | 有効期限切れです | 予約日を過ぎたためご利用できません |
 | ALREADY_COMPLETED | 送信済みです | すでに問診票を送信済みです |
-| CANCELLED | キャンセルされました | 受付によりキャンセルされました |
+| SESSION_CANCELLED | キャンセルされました | 受付によりキャンセルされました |
 | SERVER_ERROR | システムエラー | 時間をおいて再度お試しください |
 
 ---
@@ -671,7 +671,7 @@ Response: {
 ```
 POST /api/v1/auth/login
 Body: { "email": "...", "password": "..." }
-Response: { "data": { "access_token": "...", "role": "doctor", "expires_at": "..." } }
+Response: { "data": { "access_token": "...", "token_type": "Bearer", "expires_in": 900, "user": { "role": "doctor" } } }
 ```
 
 ---
@@ -754,8 +754,13 @@ Response: { "data": { "access_token": "...", "role": "doctor", "expires_at": "..
 │  │ 10:30          │  │  │                                      │    │
 │  └────────────────┘  │  │  ┌──────────┐  ┌──────────────┐    │    │
 │                      │  │  │  印 刷   │  │ 画像保存（PNG）│   │    │
-│  ┌────────────────┐  │  │  └──────────┘  └──────────────┘    │    │
-│  │   QR発行する   │  │  └──────────────────────────────────────┘    │
+│  担当医（任意）      │  │  └──────────┘  └──────────────┘    │    │
+│  ┌────────────────┐  │  └──────────────────────────────────────┘    │
+│  │ 山田 太郎  ∨  │  │                                               │
+│  └────────────────┘  │                                               │
+│                      │                                               │
+│  ┌────────────────┐  │                                               │
+│  │   QR発行する   │  │                                               │
 │  └────────────────┘  │                                               │
 │                      │                                               │
 └──────────────────────┴───────────────────────────────────────────────┘
@@ -776,6 +781,7 @@ Response: { "data": { "access_token": "...", "role": "doctor", "expires_at": "..
 | 患者ID | 必須・数字のみ |
 | 診療科 | 必須・選択式 |
 | 予約日時 | 必須・過去日時は不可 |
+| 担当医 | 任意・doctorロールのスタッフのみ選択可 |
 
 #### API
 
@@ -784,14 +790,16 @@ POST /api/v1/sessions
 Body: {
   "external_patient_id": "000123",
   "department_id": "uuid",
-  "appointment_at": "2026-03-28T10:30:00+09:00"
+  "appointment_at": "2026-03-28T01:30:00Z",
+  "doctor_id": "uuid-doctor"
 }
 Response: {
   "data": {
     "session_id": "uuid",
     "qr_token": "uuid-v4",
     "qr_image_url": "/api/v1/sessions/{id}/qr.png",
-    "qr_expires_at": "2026-03-29T00:00:00+09:00"
+    "qr_expires_at": "2026-03-29T15:00:00Z",
+    "doctor_name": "山田 太郎"
   }
 }
 ```

@@ -224,7 +224,12 @@ claudeinquiry/
 │   ├── package.json
 │   └── Dockerfile
 └── docs/
-    ├── openapi.yaml               # API仕様書（実装前に先に書く）
+    ├── requirements.md            # 要件定義書
+    ├── db-definition.md           # DB定義書・ER図
+    ├── screen-definition.md       # 画面定義書
+    ├── api-specification.md       # API仕様書（人間可読版）
+    ├── openapi.yaml               # API仕様書（OpenAPI 3.1 機械可読版。実装前に先に書く）
+    ├── test-specification.md      # テスト仕様書
     ├── fhir-mapping.md            # FHIRリソースマッピング定義
     └── form-schema.md             # フォーム定義スキーマ仕様
 ```

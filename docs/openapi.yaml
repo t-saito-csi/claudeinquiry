@@ -241,7 +241,7 @@ paths:
         患者の問診回答を送信する。
         送信後、非同期で以下の処理が実行される：
         1. Claude API によるAIサマリー生成
-        2. NEC MegaOakHRへのFHIR QuestionnaireResource送信
+        2. NEC MegaOakHRへのFHIR QuestionnaireResponse送信
       security: []
       parameters:
         - name: session_id
@@ -1447,6 +1447,7 @@ components:
         doctor_name:
           type: string
           nullable: true
+          description: 担当医の氏名（inquiry_sessions.doctor_id → staff_users.full_name）
         form_definition_id:
           type: string
           format: uuid
@@ -1521,6 +1522,11 @@ components:
           type: string
           format: date-time
           description: 過去日時は不可
+        doctor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 担当医のstaff_user_id（doctorロールのみ。省略可）
 
     CreatedSession:
       type: object
@@ -1550,6 +1556,15 @@ components:
         qr_expires_at:
           type: string
           format: date-time
+        doctor_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 担当医のstaff_user_id
+        doctor_name:
+          type: string
+          nullable: true
+          description: 担当医の氏名（staff_users.full_name）
         status:
           $ref: '#/components/schemas/SessionStatusEnum'
 
