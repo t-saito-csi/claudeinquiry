@@ -5,9 +5,9 @@ pydantic-settings を使用して環境変数を型安全に読み込む。
 本番環境では SECRET_KEY と ENCRYPTION_KEY を KMS 経由で取得すること。
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     """アプリケーション設定。
 
     環境変数または .env ファイルから値を読み込む。
-    必須フィールド(SECRET_KEY, ENCRYPTION_KEY)が未設定の場合は起動時に例外を送出する。
+    必須フィールドが未設定の場合は起動時に例外を送出する。
+    production 環境では ANTHROPIC_API_KEY / FHIR_CLIENT_SECRET も必須。
     """
 
     model_config = SettingsConfigDict(
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     # -----------------------------------------------
     # Database
     # -----------------------------------------------
-    DATABASE_URL: str = "postgresql+asyncpg://user:pass@localhost/inquiry_db"
+    DATABASE_URL: str  # 必須: デフォルト値なし (平文パスワード埋め込み禁止)
 
     # -----------------------------------------------
     # Redis
@@ -70,7 +71,23 @@ class Settings(BaseSettings):
         """
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v  # type: ignore[return-value]
+        if isinstance(v, list):
+            return v
+        return []
+
+    @model_validator(mode="after")
+    def validate_production_required_fields(self) -> Self:
+        """production 環境では外部サービスの認証情報を必須とする。"""
+        if self.ENVIRONMENT == "production":
+            if not self.ANTHROPIC_API_KEY:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY is required in production environment"
+                )
+            if not self.FHIR_CLIENT_SECRET:
+                raise ValueError(
+                    "FHIR_CLIENT_SECRET is required in production environment"
+                )
+        return self
 
     @property
     def is_development(self) -> bool:
