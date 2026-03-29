@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* WCAG 2.1 AA: フォーカスリングを視認しやすくする */
+@layer base {
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-blue-600;
+  }
+
+  body {
+    @apply antialiased bg-gray-50 text-gray-900;
+    /* 高齢者向け: 最小フォントサイズを確保 */
+    font-size: 1.0625rem;
+    line-height: 1.75;
+  }
+}

@@ -1,0 +1,87 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://inquiry_user:inquiry_pass@db:5432/inquiry_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-6}
+      - FHIR_SERVER_URL=${FHIR_SERVER_URL}
+      - FHIR_CLIENT_ID=${FHIR_CLIENT_ID}
+      - FHIR_CLIENT_SECRET=${FHIR_CLIENT_SECRET}
+      - ENVIRONMENT=development
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - inquiry_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    depends_on:
+      - api
+    networks:
+      - inquiry_network
+
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-inquiry_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-inquiry_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-inquiry_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inquiry_user} -d ${POSTGRES_DB:-inquiry_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inquiry_network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inquiry_network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  inquiry_network:
+    driver: bridge
