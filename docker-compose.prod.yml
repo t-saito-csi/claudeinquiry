@@ -18,6 +18,7 @@ services:
       - FHIR_CLIENT_SECRET=${FHIR_CLIENT_SECRET}
       - ENVIRONMENT=production
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
     depends_on:
       db:
         condition: service_healthy
@@ -30,14 +31,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 128M
+    mem_limit: 512m
+    cpus: "1.0"
     networks:
       - inquiry_network
 
@@ -51,23 +46,24 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      # TLS証明書をマウント (Let's Encrypt 等で取得した証明書を配置してください)
+      # 例: certbot で取得する場合
+      #   certbot certonly --standalone -d your-domain.example.com
+      - ${SSL_CERT_PATH:-./certs/fullchain.pem}:/etc/nginx/certs/fullchain.pem:ro
+      - ${SSL_KEY_PATH:-./certs/privkey.pem}:/etc/nginx/certs/privkey.pem:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      test: ["CMD", "curl", "-fk", "https://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
+    mem_limit: 128m
+    cpus: "0.5"
     networks:
       - inquiry_network
 
@@ -85,14 +81,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          cpus: "0.5"
-          memory: 256M
+    mem_limit: 1g
+    cpus: "2.0"
     networks:
       - inquiry_network
 
@@ -109,14 +99,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
+    mem_limit: 256m
+    cpus: "0.5"
     networks:
       - inquiry_network
 
