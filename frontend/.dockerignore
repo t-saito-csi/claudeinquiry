@@ -1,0 +1,33 @@
+# Node modules (reinstalled in container)
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment files (never include secrets)
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Testing
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
