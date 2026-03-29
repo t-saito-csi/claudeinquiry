@@ -17,6 +17,24 @@ _BASE = {
     "ENCRYPTION_KEY": "b" * 32,
 }
 
+# CI 環境変数がテストに漏れ込まないよう共通で削除する環境変数
+_CI_ENV_VARS = [
+    "DATABASE_URL",
+    "SECRET_KEY",
+    "ENCRYPTION_KEY",
+    "ANTHROPIC_API_KEY",
+    "FHIR_CLIENT_SECRET",
+    "ALLOWED_ORIGINS",
+    "ENVIRONMENT",
+]
+
+
+@pytest.fixture(autouse=True)
+def isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """各テスト実行前に CI 環境変数を除去してテストを分離する。"""
+    for key in _CI_ENV_VARS:
+        monkeypatch.delenv(key, raising=False)
+
 
 def test_settings_default_environment() -> None:
     """ENVIRONMENT のデフォルト値が 'development' であること。"""

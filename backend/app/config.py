@@ -80,13 +80,9 @@ class Settings(BaseSettings):
         """production 環境では外部サービスの認証情報を必須とする。"""
         if self.ENVIRONMENT == "production":
             if not self.ANTHROPIC_API_KEY:
-                raise ValueError(
-                    "ANTHROPIC_API_KEY is required in production environment"
-                )
+                raise ValueError("ANTHROPIC_API_KEY is required in production environment")
             if not self.FHIR_CLIENT_SECRET:
-                raise ValueError(
-                    "FHIR_CLIENT_SECRET is required in production environment"
-                )
+                raise ValueError("FHIR_CLIENT_SECRET is required in production environment")
         return self
 
     @property

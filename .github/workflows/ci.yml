@@ -68,8 +68,8 @@ jobs:
           SECRET_KEY: ci-test-secret-key-at-least-32-chars-long
           ENCRYPTION_KEY: ci-test-encryption-key-32byteslong
           ANTHROPIC_API_KEY: dummy-key-for-ci
-          ENVIRONMENT: testing
-          ALLOWED_ORIGINS: http://localhost:5173
+          ENVIRONMENT: development
+          ALLOWED_ORIGINS: '["http://localhost:5173"]'
         run: |
           pytest app/tests/ \
             --cov=app \
